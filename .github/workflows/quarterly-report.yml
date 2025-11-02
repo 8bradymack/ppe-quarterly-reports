@@ -4,7 +4,7 @@ on:
   schedule:
     # Runs at midnight (UTC) on the 1st day of January, May, and September
     # That's every 4 months: Jan 1, May 1, Sep 1
-    - cron: '55 0 2 11 *'
+    - cron: '0 1 2 11 *'
   
   # Allows you to manually trigger the workflow from the Actions tab (for testing)
   workflow_dispatch:
