@@ -12,71 +12,78 @@ const SENDER_EMAIL = process.env.SENDER_EMAIL;
 sgMail.setApiKey(SENDGRID_API_KEY);
 
 /**
- * Generate Statistics Excel file
+ * Generate Statistics Excel file with yearly summary
  */
 function generateStatsExcel(items) {
-  console.log('📊 Generating statistics Excel...');
+  console.log('📊 Generating yearly statistics Excel...');
   
   const data = items.map(item => {
     const cleanings = item.activities ? item.activities.filter(a => a.cleaning).length : 0;
     const inspections = item.activities ? item.activities.filter(a => a.inspection).length : 0;
+    
+    // Calculate activities for current year
+    const currentYear = new Date().getFullYear();
+    const yearlyCleanings = item.activities ? 
+      item.activities.filter(a => a.cleaning && new Date(a.date).getFullYear() === currentYear).length : 0;
+    const yearlyInspections = item.activities ? 
+      item.activities.filter(a => a.inspection && new Date(a.date).getFullYear() === currentYear).length : 0;
     
     return {
       'Firefighter Name': item.name,
       'Item Type': item.type,
       'Serial': item.serial,
       'Model': item.model || 'N/A',
-      'Total Cleanings': cleanings,
-      'Total Inspections': inspections,
-      'Total Activities': cleanings + inspections
+      'Cleanings (This Year)': yearlyCleanings,
+      'Inspections (This Year)': yearlyInspections,
+      'Total Cleanings (All Time)': cleanings,
+      'Total Inspections (All Time)': inspections,
+      'Total Activities (This Year)': yearlyCleanings + yearlyInspections,
+      'Total Activities (All Time)': cleanings + inspections
     };
   });
   
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Statistics');
+  XLSX.utils.book_append_sheet(wb, ws, 'Yearly Statistics');
   
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
 
 /**
- * Generate Activity Logs Excel file
+ * Generate Activity Logs Excel file for the current year
  */
 function generateLogsExcel(items) {
-  console.log('📋 Generating activity logs Excel...');
+  console.log('📋 Generating yearly activity logs Excel...');
   
+  const currentYear = new Date().getFullYear();
   const data = [];
   
   items.forEach(item => {
     if (item.activities && item.activities.length > 0) {
       item.activities.forEach(activity => {
-        data.push({
-          'Firefighter Name': activity.snapshotName || item.name,
-          'Item Type': activity.snapshotType || item.type,
-          'Serial Number': activity.snapshotSerial || item.serial,
-          'Model': activity.snapshotModel || item.model || 'N/A',
-          'Date': activity.date,
-          'Advanced Cleaning': activity.cleaning ? 'Yes' : 'No',
-          'Advanced Inspection': activity.inspection ? 'Yes' : 'No'
-        });
-      });
-    } else {
-      // Include items with no activities
-      data.push({
-        'Firefighter Name': item.name,
-        'Item Type': item.type,
-        'Serial Number': item.serial,
-        'Model': item.model || 'N/A',
-        'Date': 'No activities',
-        'Advanced Cleaning': 'No',
-        'Advanced Inspection': 'No'
+        const activityDate = new Date(activity.date);
+        // Only include activities from current year
+        if (activityDate.getFullYear() === currentYear) {
+          data.push({
+            'Firefighter Name': activity.snapshotName || item.name,
+            'Item Type': activity.snapshotType || item.type,
+            'Serial Number': activity.snapshotSerial || item.serial,
+            'Model': activity.snapshotModel || item.model || 'N/A',
+            'Date': activity.date,
+            'Advanced Cleaning': activity.cleaning ? 'Yes' : 'No',
+            'Advanced Inspection': activity.inspection ? 'Yes' : 'No'
+          });
+        }
       });
     }
   });
   
+  // Sort by date (most recent first)
+  data.sort((a, b) => new Date(b.Date) - new Date(a.Date));
+  
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Activity Logs');
+  XLSX.utils.book_append_sheet(wb, ws, `${currentYear} Activity Logs`);
   
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
@@ -86,7 +93,7 @@ function generateLogsExcel(items) {
  */
 async function generateAndSendReport() {
   try {
-    console.log('🚀 Starting quarterly report generation...');
+    console.log('🚀 Starting yearly report generation...');
     console.log(`📅 Date: ${new Date().toLocaleString()}`);
     
     // Validate environment variables
@@ -111,9 +118,9 @@ async function generateAndSendReport() {
       await sgMail.send({
         to: RECIPIENT_EMAIL,
         from: SENDER_EMAIL,
-        subject: 'Quarterly PPE Report - No Data',
-        text: 'The quarterly report was triggered but no items were found in the database.',
-        html: '<h2>Quarterly PPE Report</h2><p>No items found in the database.</p>'
+        subject: 'Annual PPE Report - No Data',
+        text: 'The yearly report was triggered but no items were found in the database.',
+        html: '<h2>Annual PPE Report</h2><p>No items found in the database.</p>'
       });
       
       console.log('✅ Notification sent');
@@ -125,12 +132,22 @@ async function generateAndSendReport() {
     const logsBuffer = generateLogsExcel(items);
     
     // Calculate statistics for email
+    const currentYear = new Date().getFullYear();
     let totalCleanings = 0;
     let totalInspections = 0;
+    let yearlyCleanings = 0;
+    let yearlyInspections = 0;
+    
     items.forEach(item => {
       if (item.activities) {
         totalCleanings += item.activities.filter(a => a.cleaning).length;
         totalInspections += item.activities.filter(a => a.inspection).length;
+        yearlyCleanings += item.activities.filter(a => 
+          a.cleaning && new Date(a.date).getFullYear() === currentYear
+        ).length;
+        yearlyInspections += item.activities.filter(a => 
+          a.inspection && new Date(a.date).getFullYear() === currentYear
+        ).length;
       }
     });
     
@@ -139,8 +156,8 @@ async function generateAndSendReport() {
     const msg = {
       to: RECIPIENT_EMAIL,
       from: SENDER_EMAIL,
-      subject: `Quarterly PPE Report - ${today}`,
-      text: `Please find attached the quarterly PPE statistics and activity logs for ${today}.`,
+      subject: `Annual PPE Report ${currentYear} - ${today}`,
+      text: `Please find attached the annual PPE statistics and activity logs for ${currentYear}.`,
       html: `
         <!DOCTYPE html>
         <html>
@@ -154,15 +171,18 @@ async function generateAndSendReport() {
             .stat-item:last-child { border-bottom: none; }
             .stat-label { font-weight: bold; }
             .stat-value { color: #2563eb; font-weight: bold; }
+            .year-highlight { background: #dbeafe; padding: 10px; border-radius: 5px; margin: 15px 0; text-align: center; font-size: 18px; font-weight: bold; color: #1e40af; }
             ul { background: #fff; padding: 15px 15px 15px 35px; border-left: 4px solid #10b981; }
             .footer { margin-top: 30px; padding-top: 20px; border-top: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; }
           </style>
         </head>
         <body>
           <div class="container">
-            <h2>📊 Quarterly PPE Report</h2>
+            <h2>📊 Annual PPE Report</h2>
             
-            <p>This is your automated quarterly report for the PPE Tracking System.</p>
+            <div class="year-highlight">Year ${currentYear} Summary</div>
+            
+            <p>This is your automated annual report for the PPE Tracking System.</p>
             
             <div class="stats">
               <div class="stat-item">
@@ -174,23 +194,31 @@ async function generateAndSendReport() {
                 <span class="stat-value">${items.length}</span>
               </div>
               <div class="stat-item">
-                <span class="stat-label">Total Cleanings:</span>
+                <span class="stat-label">Cleanings (${currentYear}):</span>
+                <span class="stat-value">${yearlyCleanings}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Inspections (${currentYear}):</span>
+                <span class="stat-value">${yearlyInspections}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Total Cleanings (All Time):</span>
                 <span class="stat-value">${totalCleanings}</span>
               </div>
               <div class="stat-item">
-                <span class="stat-label">Total Inspections:</span>
+                <span class="stat-label">Total Inspections (All Time):</span>
                 <span class="stat-value">${totalInspections}</span>
               </div>
             </div>
             
             <h3>📎 Attached Files</h3>
             <ul>
-              <li><strong>PPE_Statistics.xlsx</strong> - Summary statistics for all items</li>
-              <li><strong>PPE_Activity_Logs.xlsx</strong> - Detailed activity logs for all recorded events</li>
+              <li><strong>PPE_Annual_Statistics_${currentYear}.xlsx</strong> - Summary statistics including current year and all-time totals</li>
+              <li><strong>PPE_Activity_Logs_${currentYear}.xlsx</strong> - Detailed activity logs for all events in ${currentYear}</li>
             </ul>
             
             <div class="footer">
-              <p><em>This is an automated message from the PPE Tracking System.</em></p>
+              <p><em>This is an automated annual message from the PPE Tracking System.</em></p>
               <p>Generated by GitHub Actions on ${new Date().toLocaleString()}</p>
             </div>
           </div>
@@ -200,13 +228,13 @@ async function generateAndSendReport() {
       attachments: [
         {
           content: statsBuffer.toString('base64'),
-          filename: `PPE_Statistics_${today.replace(/\//g, '-')}.xlsx`,
+          filename: `PPE_Annual_Statistics_${currentYear}.xlsx`,
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           disposition: 'attachment'
         },
         {
           content: logsBuffer.toString('base64'),
-          filename: `PPE_Activity_Logs_${today.replace(/\//g, '-')}.xlsx`,
+          filename: `PPE_Activity_Logs_${currentYear}.xlsx`,
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           disposition: 'attachment'
         }
@@ -216,8 +244,8 @@ async function generateAndSendReport() {
     // Send email
     console.log('📧 Sending email to:', RECIPIENT_EMAIL);
     await sgMail.send(msg);
-    console.log('✅ Quarterly report sent successfully!');
-    console.log('📬 Email sent with 2 Excel attachments');
+    console.log('✅ Annual report sent successfully!');
+    console.log(`📬 Email sent with 2 Excel attachments for year ${currentYear}`);
     
   } catch (error) {
     console.error('❌ Error generating or sending report:', error);
@@ -227,10 +255,10 @@ async function generateAndSendReport() {
       await sgMail.send({
         to: RECIPIENT_EMAIL,
         from: SENDER_EMAIL,
-        subject: 'ERROR: Quarterly PPE Report Failed',
-        text: `The quarterly report failed to generate.\n\nError: ${error.message}\n\nPlease check the GitHub Actions logs for more details.`,
+        subject: 'ERROR: Annual PPE Report Failed',
+        text: `The annual report failed to generate.\n\nError: ${error.message}\n\nPlease check the GitHub Actions logs for more details.`,
         html: `
-          <h2 style="color: #dc2626;">⚠️ Quarterly Report Generation Failed</h2>
+          <h2 style="color: #dc2626;">⚠️ Annual Report Generation Failed</h2>
           <p><strong>Error:</strong> ${error.message}</p>
           <p>Please check the <a href="https://github.com/${process.env.GITHUB_REPOSITORY}/actions">GitHub Actions logs</a> for more details.</p>
           <p><em>Timestamp: ${new Date().toLocaleString()}</em></p>
